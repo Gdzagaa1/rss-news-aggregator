@@ -10,23 +10,110 @@
 #include "html-utils.h"
 #include "streamtokenizer.h"
 #include "url.h"
+#include "hashset.h"
 
 static void Welcome(const char *welcomeTextFileName);
-static void BuildIndices(const char *feedsFileName);
-static void ProcessFeed(const char *remoteDocumentName);
-static void PullAllNewsItems(FILE *dataStream);
-static bool GetNextItemTag(streamtokenizer *st);
-static void ProcessSingleNewsItem(streamtokenizer *st);
+static void BuildIndices(const char *feedsFileName, hashset *stopWords, hashset *seenArticles, hashset *indicesSet);
+static void ProcessFeed(const char *remoteDocumentName, hashset *stopWords, hashset *seenArticles, hashset *indicesSet);
+static void PullAllNewsItems(FILE *dataStream, hashset *stopWords, hashset *seenArticles, hashset *indicesSet);
+static bool GetNextItemTag(streamtokenizer *st,  hashset *stopWords, hashset *seenArticles, hashset *indicesSet);
+static void ProcessSingleNewsItem(streamtokenizer *st, hashset *stopWords, hashset *seenArticles, hashset *indicesSet);
 static void ExtractElement(streamtokenizer *st, const char *htmlTag,
-                           char dataBuffer[], int bufferLength);
+                           char dataBuffer[], int bufferLength, hashset *stopWords, hashset *seenArticles, hashset *indicesSet);
 static void ParseArticle(const char *articleTitle,
                          const char *articleDescription,
-                         const char *articleURL);
+                         const char *articleURL, hashset *stopWords, hashset *seenArticles, hashset *indicesSet);
 static void ScanArticle(streamtokenizer *st, const char *articleTitle,
-                        const char *unused, const char *articleURL);
-static void QueryIndices();
-static void ProcessResponse(const char *word);
+                        const char *unused, const char *articleURL, hashset *stopWords, hashset *seenArticles, hashset *indicesSet);
+static void QueryIndices(hashset *stopWords, hashset *seenArticles, hashset *indicesSet);
+static void ProcessResponse(const char *word, hashset *stopWords, hashset *seenArticles, hashset *indicesSet);
 static bool WordIsWellFormed(const char *word);
+static void enterStopWordsInHashset(hashset *stopWords, const char *stopWordsFile);
+static const int stopWordsNumBuckets = 1009;
+//static const int articlesNumBuckets = 10007;
+static const int indicesNumBuckets = 10007;
+static const signed long kHashMultiplier = -1664117991L;
+
+/** This struct is an element of "indicesSet" */
+typedef struct {
+  char* word;
+  vector relevantArticles;
+} indicesElem;
+
+typedef struct {
+  char* title;
+  char* url;
+  int frequency;
+} freqs;
+
+
+
+/** StringHash */
+static int StringHash(const void *key, int numBuckets) {
+  const char *s = *(const char **)key;
+  int i;
+  unsigned long hashcode = 0;
+  
+  for (i = 0; i < strlen(s); i++)  {
+      hashcode = hashcode * kHashMultiplier + tolower(s[i]); 
+  }
+  return hashcode % numBuckets; 
+}
+
+
+int stringCmpFn(const void *a, const void *b) {
+  return strcasecmp(*(const char **)a, *(const char **)b);
+}
+
+void strFreeFn(void *ptr) {
+  free(*(char **)ptr);
+}
+
+/** Hash function for  "indicesSet"*/
+static int indicesHash(const void* elemAdr, int numBuckets) {
+  const indicesElem* ie = (indicesElem*)elemAdr;
+  const char* s = ie->word;
+  int i;
+  unsigned long hashcode = 0;
+  
+  for (i = 0; i < strlen(s); i++)
+    hashcode = hashcode * kHashMultiplier + tolower(s[i]);
+  
+  return hashcode % numBuckets;
+}
+
+/** Comapare function for  "indicesSet*/
+int indicesCmp(const void *a, const void *b) {
+  const indicesElem *first = (const indicesElem *) a;
+  const char *second = *(const char**) b;
+  return strcasecmp(first->word, second);
+}
+
+static int relArtCmp(const void* a, const void* b) {
+  const freqs* first = (freqs*)a;
+  const freqs* second = (freqs*)b;
+  return second->frequency - first->frequency;
+}
+
+static int compareVector(const void* a, const void* b) {
+  const freqs* first = (freqs*)a;
+  const freqs* second = (freqs*)b;
+  return strcasecmp(first->url, second->url);
+}
+
+/** Free function for "indicesSet */
+void indicesFree(void *key) {
+  indicesElem *in = (indicesElem*)key;
+  free(in->word); 
+  VectorDispose(&in->relevantArticles);
+}
+
+void vecFree(void* key) {
+  freqs* fr = (freqs*) key;
+  free(fr->url);
+  free(fr->title);
+}
+
 
 /**
  * Function: main
@@ -45,25 +132,60 @@ static bool WordIsWellFormed(const char *word);
  * word appears.
  */
 
+static const char *const kStopWordsFile = "data/stop-words.txt";
 static const char *const kWelcomeTextFile = "data/welcome.txt";
 static const char *const kDefaultFeedsFile = "data/test.txt";
 static const char *const kFilePrefix = "file://";
 static const char *const kTextDelimiters =
     " \t\n\r\b!@$%^*()_+={[}]|\\'\":;/?.>,<~`";
+static const char *const kNewLineDelimiters = "\r\n";
 
 int main(int argc, char **argv) {
+  hashset stopWords;
+  HashSetNew(&stopWords, sizeof(char*), stopWordsNumBuckets, StringHash, stringCmpFn, strFreeFn);
+  enterStopWordsInHashset(&stopWords, kStopWordsFile);
+
+  hashset seenArticles;
+  HashSetNew(&seenArticles, sizeof(char*), indicesNumBuckets, StringHash, stringCmpFn, strFreeFn);
+
+  hashset indicesSet;
+  HashSetNew(&indicesSet, sizeof(indicesElem), indicesNumBuckets, indicesHash, indicesCmp, indicesFree);
+
+
+
   setbuf(stdout, NULL);
   curl_global_init(CURL_GLOBAL_DEFAULT);
   Welcome(kWelcomeTextFile);
-  BuildIndices((argc == 1) ? kDefaultFeedsFile : argv[1]);
-  QueryIndices();
+  BuildIndices((argc == 1) ? kDefaultFeedsFile : argv[1], &stopWords, &seenArticles, &indicesSet);
+  QueryIndices(&stopWords, &seenArticles, &indicesSet);
   curl_global_cleanup();
+  HashSetDispose(&stopWords);
+  HashSetDispose(&seenArticles);
+  HashSetDispose(&indicesSet);
   return 0;
 }
 
 size_t SavePage(char *ptr, size_t size, size_t nmemb, void *data) {
   return fprintf((FILE *)data, "%s", ptr);
 }
+
+
+static void enterStopWordsInHashset(hashset *stopWords, const char *stopWordsFile){
+  FILE *infile;
+  char buffer[1024];
+  streamtokenizer stream;
+  infile = fopen(stopWordsFile, "r");
+  assert(infile != NULL);
+  STNew(&stream, infile, kNewLineDelimiters, true);
+  while (STNextToken(&stream, buffer, sizeof(buffer))) {
+    char *sw = strdup(buffer);
+    HashSetEnter(stopWords, &sw);
+  }
+  STDispose(&stream);
+  fclose(infile);
+}
+
+
 
 static FILE *RemoveCData(const char *tmpFile) {
   FILE *inp = fopen(tmpFile, "rb");
@@ -123,7 +245,7 @@ static FILE *FetchURL(const char *path, const char *tmpFile) {
  * is a configuration file that travels with the application.
  */
 
-static const char *const kNewLineDelimiters = "\r\n";
+
 static void Welcome(const char *welcomeTextFileName) {
   FILE *infile;
   streamtokenizer st;
@@ -159,7 +281,7 @@ static void Welcome(const char *welcomeTextFileName) {
  * pull the remote document and index its content.
  */
 
-static void BuildIndices(const char *feedsFileName) {
+static void BuildIndices(const char *feedsFileName, hashset *stopWords, hashset *seenArticles, hashset *indicesSet) {
   FILE *infile;
   streamtokenizer st;
   char remoteFileName[1024];
@@ -173,7 +295,7 @@ static void BuildIndices(const char *feedsFileName) {
         &st,
         ": "); // now ignore the semicolon and any whitespace directly after it
     STNextToken(&st, remoteFileName, sizeof(remoteFileName));
-    ProcessFeed(remoteFileName);
+    ProcessFeed(remoteFileName, stopWords, seenArticles, indicesSet);
   }
 
   STDispose(&st);
@@ -184,7 +306,7 @@ static void BuildIndices(const char *feedsFileName) {
 /** * Function: ProcessFeedFromFile * --------------------- * ProcessFeed
  * locates the specified RSS document, from locally */
 
-static void ProcessFeedFromFile(char *fileName) {
+static void ProcessFeedFromFile(char *fileName, hashset *stopWords, hashset *seenArticles, hashset *indicesSet) {
   FILE *infile;
   streamtokenizer st;
   char articleDescription[1024];
@@ -193,7 +315,7 @@ static void ProcessFeedFromFile(char *fileName) {
   assert(infile != NULL);
   STNew(&st, infile, kTextDelimiters, true);
   ScanArticle(&st, (const char *)fileName, articleDescription,
-              (const char *)fileName);
+              (const char *)fileName, stopWords, seenArticles, indicesSet);
   STDispose(&st); // remember that STDispose doesn't close the file, since STNew
                   // doesn't open one..
   fclose(infile);
@@ -210,15 +332,15 @@ static void ProcessFeedFromFile(char *fileName) {
  * different response codes mean.
  */
 
-static void ProcessFeed(const char *remoteDocumentName) {
+static void ProcessFeed(const char *remoteDocumentName, hashset *stopWords, hashset *seenArticles, hashset *indicesSet) {
 
   if (!strncmp(kFilePrefix, remoteDocumentName, strlen(kFilePrefix))) {
-    ProcessFeedFromFile((char *)remoteDocumentName + strlen(kFilePrefix));
+    ProcessFeedFromFile((char *)remoteDocumentName + strlen(kFilePrefix), stopWords, seenArticles, indicesSet);
     return;
   }
 
   FILE *tmpFeed = FetchURL(remoteDocumentName, "tmp_feed");
-  PullAllNewsItems(tmpFeed);
+  PullAllNewsItems(tmpFeed, stopWords, seenArticles, indicesSet);
   fclose(tmpFeed);
 }
 
@@ -255,13 +377,13 @@ static void ProcessFeed(const char *remoteDocumentName) {
  * </item>.
  */
 
-static void PullAllNewsItems(FILE *dataStream) {
+static void PullAllNewsItems(FILE *dataStream, hashset *stopWords, hashset *seenArticles, hashset *indicesSet) {
   streamtokenizer st;
   STNew(&st, dataStream, kTextDelimiters, false);
   while (GetNextItemTag(
-      &st)) { // if true is returned, then assume that <item ...> has just been
+      &st, stopWords, seenArticles, indicesSet)) { // if true is returned, then assume that <item ...> has just been
               // read and pulled from the data stream
-    ProcessSingleNewsItem(&st);
+    ProcessSingleNewsItem(&st, stopWords, seenArticles, indicesSet);
   }
 
   STDispose(&st);
@@ -289,7 +411,7 @@ static void PullAllNewsItems(FILE *dataStream) {
  */
 
 static const char *const kItemTagPrefix = "<item";
-static bool GetNextItemTag(streamtokenizer *st) {
+static bool GetNextItemTag(streamtokenizer *st, hashset *stopWords, hashset *seenArticles, hashset *indicesSet) {
   char htmlTag[1024];
   while (GetNextTag(st, htmlTag, sizeof(htmlTag))) {
     if (strncasecmp(htmlTag, kItemTagPrefix, strlen(kItemTagPrefix)) == 0) {
@@ -326,7 +448,7 @@ static const char *const kItemEndTag = "</item>";
 static const char *const kTitleTagPrefix = "<title";
 static const char *const kDescriptionTagPrefix = "<description";
 static const char *const kLinkTagPrefix = "<link";
-static void ProcessSingleNewsItem(streamtokenizer *st) {
+static void ProcessSingleNewsItem(streamtokenizer *st, hashset *stopWords, hashset *seenArticles, hashset *indicesSet) {
   char htmlTag[1024];
   char articleTitle[1024];
   char articleDescription[1024];
@@ -336,19 +458,19 @@ static void ProcessSingleNewsItem(streamtokenizer *st) {
   while (GetNextTag(st, htmlTag, sizeof(htmlTag)) &&
          (strcasecmp(htmlTag, kItemEndTag) != 0)) {
     if (strncasecmp(htmlTag, kTitleTagPrefix, strlen(kTitleTagPrefix)) == 0) {
-      ExtractElement(st, htmlTag, articleTitle, sizeof(articleTitle));
+      ExtractElement(st, htmlTag, articleTitle, sizeof(articleTitle), stopWords, seenArticles, indicesSet);
     }
     if (strncasecmp(htmlTag, kDescriptionTagPrefix,
                     strlen(kDescriptionTagPrefix)) == 0)
       ExtractElement(st, htmlTag, articleDescription,
-                     sizeof(articleDescription));
+                     sizeof(articleDescription), stopWords, seenArticles, indicesSet);
     if (strncasecmp(htmlTag, kLinkTagPrefix, strlen(kLinkTagPrefix)) == 0)
-      ExtractElement(st, htmlTag, articleURL, sizeof(articleURL));
+      ExtractElement(st, htmlTag, articleURL, sizeof(articleURL), stopWords, seenArticles, indicesSet);
   }
 
   if (strncmp(articleURL, "", sizeof(articleURL)) == 0)
     return; // punt, since it's not going to take us anywhere
-  ParseArticle(articleTitle, articleDescription, articleURL);
+  ParseArticle(articleTitle, articleDescription, articleURL, stopWords, seenArticles, indicesSet);
 }
 
 /**
@@ -375,7 +497,7 @@ static void ProcessSingleNewsItem(streamtokenizer *st) {
  */
 
 static void ExtractElement(streamtokenizer *st, const char *htmlTag,
-                           char dataBuffer[], int bufferLength) {
+                           char dataBuffer[], int bufferLength, hashset *stopWords, hashset *seenArticles, hashset *indicesSet) {
   assert(htmlTag[strlen(htmlTag) - 1] == '>');
   if (htmlTag[strlen(htmlTag) - 2] == '/')
     return; // e.g. <description/> would state that a description is not being
@@ -412,7 +534,7 @@ static void ExtractElement(streamtokenizer *st, const char *htmlTag,
 
 static void ParseArticle(const char *articleTitle,
                          const char *articleDescription,
-                         const char *articleURL) {
+                         const char *articleURL, hashset *stopWords, hashset *seenArticles, hashset *indicesSet) {
   FILE *tmpDoc = FetchURL(articleURL, "tmp_doc");
   if (tmpDoc == NULL) {
     printf("Unable to fetch URL: %s\n", articleURL);
@@ -421,7 +543,7 @@ static void ParseArticle(const char *articleTitle,
   printf("Scanning \"%s\"\n", articleTitle);
   streamtokenizer st;
   STNew(&st, tmpDoc, kTextDelimiters, false);
-  ScanArticle(&st, articleTitle, articleDescription, articleURL);
+  ScanArticle(&st, articleTitle, articleDescription, articleURL, stopWords, seenArticles, indicesSet);
   STDispose(&st);
   fclose(tmpDoc);
 }
@@ -440,30 +562,75 @@ static void ParseArticle(const char *articleTitle,
  */
 
 static void ScanArticle(streamtokenizer *st, const char *articleTitle,
-                        const char *unused, const char *articleURL) {
-  int numWords = 0;
+                        const char *unused, const char *articleURL, hashset *stopWords, hashset *seenArticles, hashset *indicesSet) {
+  // int numWords = 0;
   char word[1024];
-  char longestWord[1024] = {'\0'};
+  // char longestWord[1024] = {'\0'};
 
   while (STNextToken(st, word, sizeof(word))) {
     if (strcasecmp(word, "<") == 0) {
       SkipIrrelevantContent(st); // in html-utls.h
     } else {
       RemoveEscapeCharacters(word);
+
       if (WordIsWellFormed(word)) {
-        numWords++;
-        if (strlen(word) > strlen(longestWord))
-          strcpy(longestWord, word);
+      //   numWords++;
+      //   if (strlen(word) > strlen(longestWord))
+      //     strcpy(longestWord, word);
+      // }
+
+      char* w = strdup(word);
+      if (HashSetLookup(stopWords, &w) != NULL) continue;
+      if (HashSetLookup(indicesSet, &w) == NULL) {
+        freqs info;
+        info.frequency = 1;
+        info.title = strdup(articleTitle);
+        info.url = strdup(articleURL);
+        
+        indicesElem in;
+        vector vec;
+        VectorNew(&vec, sizeof(freqs), vecFree, 10);
+        in.word = strdup(word);
+        in.relevantArticles = vec;
+
+        VectorAppend(&in.relevantArticles, &info);
+        HashSetEnter(indicesSet, &in);
+      } else if (HashSetLookup(indicesSet, &w) != NULL) {
+        freqs forCmp;
+        indicesElem* elem;
+        vector* vec;
+        forCmp.url = strdup(articleURL);
+        elem = HashSetLookup(indicesSet, &w);
+        vec = &(elem->relevantArticles);
+
+        int i = VectorSearch(vec, &forCmp, compareVector, 0, false);
+        
+        if (i != -1) {
+          freqs* f;
+          f = VectorNth(vec, i);
+          f->frequency = f->frequency + 1;
+        } else {
+          freqs fq;
+          fq.url = strdup(articleURL);
+          fq.title = strdup(articleTitle);
+          fq.frequency = 1;
+          VectorAppend(vec, &fq);
+        }
+
+
       }
+     free(w);
     }
+   
   }
 
-  printf("\tWe counted %d well-formed words [including duplicates].\n",
-         numWords);
-  printf("\tThe longest word scanned was \"%s\".", longestWord);
-  if (strlen(longestWord) >= 15 && (strchr(longestWord, '-') == NULL))
-    printf(" [Ooooo... long word!]");
-  printf("\n");
+  // printf("\tWe counted %d well-formed words [including duplicates].\n",
+  //        numWords);
+  // printf("\tThe longest word scanned was \"%s\".", longestWord);
+  // if (strlen(longestWord) >= 15 && (strchr(longestWord, '-') == NULL))
+  //   printf(" [Ooooo... long word!]");
+  // printf("\n");
+  }
 }
 
 /**
@@ -474,7 +641,7 @@ static void ScanArticle(streamtokenizer *st, const char *articleTitle,
  * relevance) that contain that word.
  */
 
-static void QueryIndices() {
+static void QueryIndices(hashset *stopWords, hashset *seenArticles, hashset *indicesSet) {
   char response[1024];
   while (true) {
     printf("Please enter a single search term [enter to break]: ");
@@ -482,7 +649,7 @@ static void QueryIndices() {
     response[strlen(response) - 1] = '\0';
     if (strcasecmp(response, "") == 0)
       break;
-    ProcessResponse(response);
+    ProcessResponse(response, stopWords, seenArticles, indicesSet);
   }
 }
 
@@ -493,15 +660,32 @@ static void QueryIndices() {
  * indices for a list of web documents containing the specified word.
  */
 
-static void ProcessResponse(const char *word) {
+static void ProcessResponse(const char *word, hashset *stopWords, hashset *seenArticles, hashset *indicesSet) {
   if (WordIsWellFormed(word)) {
-    printf("\tWell, we don't have the database mapping words to online news "
-           "articles yet, but if we DID have\n");
-    printf("\tour hashset of indices, we'd list all of the articles containing "
-           "\"%s\".\n",
-           word);
+    char* w = strdup(word);
+    
+    if (HashSetLookup(stopWords, &w) != NULL) {
+      printf("Too common a word to be taken seriously. Try something more specific.\n");
+    } else {
+      if (HashSetLookup(indicesSet, &w) == NULL) {
+        printf("None of today's news articles contain the word \"%s\".\n", word);
+      } else {
+        vector* vec;
+        indicesElem* info = HashSetLookup(indicesSet, &w);
+        vec = &(info->relevantArticles);
+        VectorSort(vec, relArtCmp);
+        int num = VectorLength(vec);
+        for(int i = 0; i < num; i++) {
+          freqs* article = VectorNth(vec, i);
+          printf("%d.) \"%s\" ", i + 1, article->title);
+          printf("[search term occurs %d %s]\n", article->frequency, article->frequency == 1 ? "time" : "times");
+          printf("\"%s\"\n", article->url);
+        }
+      }
+    }
+    free(w);
   } else {
-    printf(
+        printf(
         "\tWe won't be allowing words like \"%s\" into our set of indices.\n",
         word);
   }
@@ -530,3 +714,5 @@ static bool WordIsWellFormed(const char *word) {
 
   return true;
 }
+
+
