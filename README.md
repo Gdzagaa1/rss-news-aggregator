@@ -1,4 +1,5 @@
-*Programming Paradigms course project*
+*Programming Paradigms course project.*
+
 See the [assignment PDF](https://github.com/Gdzagaa1/paradigms-04/blob/master/17-Assignment-4-RSS.pdf)  for detailed algorithm explanation and implementation requirements.
 # RSS News Feed Aggregator
 
