@@ -1,44 +1,6 @@
-[![Review Assignment Due Date](https://classroom.github.com/assets/deadline-readme-button-22041afd0340ce965d47ae6ef1cefeee28c7c493a6346c4f15d667ab976d596c.svg)](https://classroom.github.com/a/36XIBlW7)
-## დავალების ატვირთვა
-დავალება უნდა ატვირთოთ თქვენს პერსონალურ Github Classroom-ის რეპოზიტორიაში.
-
-## საჭირო პაკეტები
-დაგჭირდებათ libcurl პაკეტის დაყენება
-```sh
-dpkg --add-architecture i386
-apt update
-apt install gcc make
-apt install libcurl4-openssl-dev:i386
-apt install libnsl-dev:i386
-apt install gcc-multilib
-```
-
-## კომპილაცია
-```sh
-make
-```
-
-## ტესტებისთვის საჭირო data ფაილები
-`make` ის პირველი გაშვება ავტომატურად შექმნის data დირექტორიას ტესტებისთვის საჭირო ფაილებით.  
-თუ რატომღაც ეს ფაილები "დაგიზიანდათ", მათი თავიდან ჩამოტვირთვისთვის გაუშვით:
-```sh
-rm -rf data/
-make data
-```
-
-## ტესტირება
-```sh
-./assn-4-checker-64 ./rss-news-search
-./assn-4-checker-64 ./rss-news-search -m
-```
-
-
-
-
-
-
-# RSS News Feed Aggregator
 *Programming Paradigms course project*
+See the [assignment PDF](https://github.com/Gdzagaa1/paradigms-04/blob/master/17-Assignment-4-RSS.pdf)  for detailed algorithm explanation and implementation requirements.
+# RSS News Feed Aggregator
 
 A C program that builds a searchable index of news articles from RSS feeds, similar to Google News.
 
@@ -76,7 +38,3 @@ The program uses three main hash tables:
 - **Word index** - Maps words to articles containing them
 
 Each word maps to a vector of articles with frequency counts, sorted by relevance.
-
-## Documentation
-
-See the assignment PDF for detailed algorithm explanation and implementation requirements.
