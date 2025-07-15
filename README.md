@@ -32,37 +32,51 @@ make data
 ./assn-4-checker-64 ./rss-news-search -m
 ```
 
-## ჰეშირების ფუნქცია
-For those of you in need of a hash function for strings,
-you can use the following, which is lifted from a textbook
-we used to use in CS106A.  You'll need to modify it so that
-it can be used by a hashset to store C strings (or structs
-keyed on C strings).
 
-```cpp
-/** 
- * StringHash                     
- * ----------  
- * This function adapted from Eric Roberts' "The Art and Science of C"
- * It takes a string and uses it to derive a hash code, which   
- * is an integer in the range [0, numBuckets).  The hash code is computed  
- * using a method called "linear congruence."  A similar function using this     
- * method is described on page 144 of Kernighan and Ritchie.  The choice of                                                     
- * the value for the kHashMultiplier can have a significant effect on the                            
- * performance of the algorithm, but not on its correctness.                                                    
- * This hash function has the additional feature of being case-insensitive,  
- * hashing "Peter Pawlowski" and "PETER PAWLOWSKI" to the same code.  
- */  
 
-static const signed long kHashMultiplier = -1664117991L;
-static int StringHash(const char *s, int numBuckets)  
-{            
-  int i;
-  unsigned long hashcode = 0;
-  
-  for (i = 0; i < strlen(s); i++)  
-    hashcode = hashcode * kHashMultiplier + tolower(s[i]);  
-  
-  return hashcode % numBuckets;                                
-}
+
+
+
+# RSS News Feed Aggregator
+*Programming Paradigms course project*
+
+A C program that builds a searchable index of news articles from RSS feeds, similar to Google News.
+
+## Features
+
+- Downloads and parses RSS feeds from multiple news sources
+- Indexes articles by word frequency using custom hash tables
+- Interactive search with relevance-based ranking
+- Filters common stop words for better search quality
+- Prevents duplicate article indexing
+
+## Usage
+
+```bash
+# Compile and run
+make
+./rss-news-search [feeds-file]
+
+# Interactive search
+Please enter a single search term [enter to break]: Iraq
+We found 196 articles with the word "Iraq"...
 ```
+
+## Requirements (Linux)
+
+```bash
+sudo apt install gcc make libcurl4-openssl-dev:i386 libnsl-dev:i386 gcc-multilib
+```
+
+## Data Structures
+
+The program uses three main hash tables:
+- **Stop words** - Common words to exclude from indexing
+- **Seen articles** - Prevents duplicate article processing  
+- **Word index** - Maps words to articles containing them
+
+Each word maps to a vector of articles with frequency counts, sorted by relevance.
+
+## Documentation
+
+See the assignment PDF for detailed algorithm explanation and implementation requirements.
