@@ -1,9 +1,10 @@
-*Programming Paradigms course project.*
+*Programming Paradigms coursework from Stanford's CS107 curriculum.*
 
 See the [assignment PDF](https://github.com/Gdzagaa1/paradigms-04/blob/master/17-Assignment-4-RSS.pdf)  for detailed algorithm explanation and implementation requirements.
 # RSS News Feed Aggregator
 
 A C program that builds a searchable index of news articles from RSS feeds, similar to Google News.
+This was completed as part of my university coursework at Free University of Tbilisi, following the CS107 curriculum originally developed at Stanford.
 
 ## Features
 
